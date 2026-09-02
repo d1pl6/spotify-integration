@@ -84,6 +84,7 @@ class SpotifyFlow(BaseFlowController):
             "duration": playing["duration_ms"] // 1000,
             "track_id": playing["track_id"],
             "thumbnail": playing.get("thumbnail"),
+            "album_name": playing.get("album_name", ""),
         }
         return None, song_data, ""
 
@@ -129,6 +130,7 @@ class SpotifyFlow(BaseFlowController):
                     "duration": duration,
                     "track_id": track_id,
                     "thumbnail": thumbnail,
+                    "album_name": playing.get("album_name", ""),
                 }
             else:
                 title = song_data["title"]
