@@ -13,5 +13,5 @@
   ],
   "playlist_url_template": "https://{host}/playlist/{id}",
   "song_url_template": "https://{host}/track/{id}",
-  "version": 1
+  "version": 2
 }
