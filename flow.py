@@ -16,6 +16,8 @@ from services.integration import BaseFlowController
 from services.playlist_store import playlist_still_registered
 from services.song_manager import SongManager
 
+from .integration import LIKED_SONGS_ID
+
 if TYPE_CHECKING:
     from .integration import SpotifyIntegration
 
@@ -34,15 +36,16 @@ class SpotifyFlow(BaseFlowController):
         self.spotify_integration = spotify_integration
         self.song_manager = song_manager
         # keyed by (playlist_name, known_id) so two playlists that share a
-        # name (different ids) cannot poison each other's cache entry
-        self._playlist_id_cache: Dict[tuple, str] = {}
+        # name (different ids) cannot poison each other's cache entry.
+        # Stores the resolved id OR None (a cached "not found" so a miss
+        # doesn't trigger a full-library scan on every keybind press).
+        self._playlist_id_cache: Dict[tuple, Optional[str]] = {}
 
     def _get_playlist_id(self, playlist_name: str, known_id: Optional[str] = None) -> Optional[str]:
         """Get Spotify playlist ID by name, with caching."""
         cache_key = (playlist_name, known_id or "")
-        cached = self._playlist_id_cache.get(cache_key)
-        if cached is not None:
-            return cached
+        if cache_key in self._playlist_id_cache:
+            return self._playlist_id_cache[cache_key]
 
         if known_id:
             self._playlist_id_cache[cache_key] = known_id
@@ -50,8 +53,10 @@ class SpotifyFlow(BaseFlowController):
 
         try:
             pid = self.spotify_integration.get_playlist_id(playlist_name)
-            if pid:
-                self._playlist_id_cache[cache_key] = pid
+            # Cache the negative result too: a playlist the user can't find
+            # (renamed, not owned, deleted) would otherwise trigger another
+            # full-library network scan on EVERY keybind press.
+            self._playlist_id_cache[cache_key] = pid
             return pid
         except Exception as e:
             logger.error("Failed to get Spotify playlist ID for '%s': %s", playlist_name, e)
@@ -214,17 +219,27 @@ class SpotifyFlow(BaseFlowController):
             # Add to Spotify playlist first (platform API)
             on_status("Sync")
             local_playlist_id = playlist_id or ""  # see YouTubeMusicFlow note
-            playlist_id = self._get_playlist_id(playlist_name, playlist_id)
-            if playlist_id is None:
-                raise RuntimeError(
-                    f"Could not find Spotify playlist '{playlist_name}'"
+            resolved_id = self._get_playlist_id(playlist_name, playlist_id)
+            if resolved_id == LIKED_SONGS_ID:
+                # "Liked Songs" is not a real playlist — save to the
+                # user's library via PUT /me/tracks instead.
+                ok = self.spotify_integration.like_track([track_id])
+                if not ok:
+                    raise RuntimeError(f"Spotify rejected liking '{title}'")
+                logger.info("Liked %s on Spotify", track_id)
+            else:
+                if resolved_id is None:
+                    raise RuntimeError(
+                        f"Could not find Spotify playlist '{playlist_name}'"
+                    )
+                ok = self.spotify_integration.add_tracks_to_playlist(
+                    resolved_id, [track_id]
                 )
-            ok = self.spotify_integration.add_tracks_to_playlist(
-                playlist_id, [track_id]
-            )
-            if not ok:
-                raise RuntimeError(f"Spotify rejected adding '{title}'")
-            logger.info("Added %s to Spotify playlist %s", track_id, playlist_id)
+                if not ok:
+                    raise RuntimeError(f"Spotify rejected adding '{title}'")
+                logger.info(
+                    "Added %s to Spotify playlist %s", track_id, resolved_id
+                )
 
             # Add to local database (platform failure won't
             # leave a stale local entry behind)

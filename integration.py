@@ -13,6 +13,12 @@ from services.integration import BaseIntegration
 
 logger = logging.getLogger(__name__)
 
+# Sentinel playlist ID for the "Liked Songs" virtual entry.  Spotify's
+# "Liked Songs" is not a real playlist (it lives under /me/tracks), so a
+# fake id lets the picker show it and the flow route to the library-like
+# API instead of the playlist-add API.
+LIKED_SONGS_ID = "__liked__"
+
 
 class SpotifyIntegration(BaseIntegration):
     id = "spotify"
@@ -77,6 +83,18 @@ class SpotifyIntegration(BaseIntegration):
                         "followerCount": p.get("followers", {}).get("total", 0),
                     }
                 )
+            # "Liked Songs" is not a playlist — it lives under /me/tracks.
+            # Surface it as a virtual entry so the user can target it with
+            # a keybind like any other playlist.
+            out.append(
+                {
+                    "title": "Liked Songs",
+                    "playlistId": LIKED_SONGS_ID,
+                    "thumbnail": None,
+                    "trackCount": 0,
+                    "followerCount": 0,
+                }
+            )
             return out
         except Exception as e:
             logger.error("Spotify: failed to get library playlists: %s", e)
@@ -117,6 +135,9 @@ class SpotifyIntegration(BaseIntegration):
 
     def get_playlist_id(self, name: str) -> Optional[str]:
         """Look up a Spotify playlist ID by name (cached per session)."""
+        # "Liked Songs" is a virtual entry — not a real playlist.
+        if name == "Liked Songs":
+            return LIKED_SONGS_ID
         if not self.spotify_api:
             return None
         if name in self._playlist_id_cache:
@@ -150,6 +171,12 @@ class SpotifyIntegration(BaseIntegration):
         if not self.spotify_api:
             return False
         return self.spotify_api.add_tracks_to_playlist(playlist_id, track_ids)
+
+    def like_track(self, track_ids: List[str]) -> bool:
+        """Save tracks to the user's Spotify library (Liked Songs)."""
+        if not self.spotify_api:
+            return False
+        return self.spotify_api.like_track(track_ids)
 
     def remove_track(self, playlist_id: str, track_id: str) -> bool:
         if not self.spotify_api:

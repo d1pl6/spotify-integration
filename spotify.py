@@ -28,7 +28,7 @@ SPOTIFY_AUTH_FILE = AUTH_FOLDER / "spotify.json"
 SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
 SPOTIFY_API_BASE = "https://api.spotify.com/v1"
-SCOPES = "user-read-currently-playing playlist-read-private playlist-read-collaborative playlist-modify-public playlist-modify-private"
+SCOPES = "user-read-currently-playing playlist-read-private playlist-read-collaborative playlist-modify-public playlist-modify-private user-library-modify"
 
 # Lazy AUTH_FOLDER initialisation - created on first method call.
 _auth_dir_created = False
@@ -80,6 +80,12 @@ def save_spotify_credentials_file(
         )
         try:
             os.write(fd, payload)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         finally:
             os.close(fd)
         os.replace(tmp_path, SPOTIFY_AUTH_FILE)
@@ -281,6 +287,25 @@ class SpotifyAPI:
             f"Failed to remove track {track_id} from playlist {playlist_id}"
         )
         return False
+
+    def like_track(self, track_ids: List[str]) -> bool:
+        """Save tracks to the user's library (Liked Songs).
+
+        Uses ``PUT /v1/me/tracks``.  Routes through :meth:`_request` for
+        consistent 401-refresh + 429-backoff handling.
+        """
+        chunk_size = 100
+        for chunk_start in range(0, len(track_ids), chunk_size):
+            chunk = track_ids[chunk_start : chunk_start + chunk_size]
+            result = self._request(
+                "PUT",
+                "/me/tracks",
+                json={"ids": chunk},
+            )
+            if result is None:
+                return False
+            logger.info("Liked %d tracks on Spotify", len(chunk))
+        return True
 
     def get_currently_playing(self) -> Optional[Dict]:
         # Pre-flight token check: _request silently swallows auth errors
